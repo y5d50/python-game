@@ -19,7 +19,7 @@ PLAYER_SPEED = 6
 ENEMY_SPEED = PLAYER_SPEED * 1.15
 ENEMY_SPAWN_INTERVAL = 10000       # every 10 seconds
 ENEMY_LIFETIME = 9500              # 9.5 seconds
-LEVEL_UP_INTERVAL = 20000          # every 20 seconds (faster difficulty increase)
+LEVEL_UP_INTERVAL = 20000          # every 20 seconds
 POINTS_PER_SECOND = 10
 
 
@@ -33,6 +33,7 @@ class Game:
         # State control
         self.running = False
         self.in_menu = True
+        self.active_timers = []  # <-- track all timer IDs
 
         # Menu screen
         self.menu_text = self.canvas.create_text(
@@ -42,10 +43,16 @@ class Game:
         )
         self.canvas.bind("<Button-1>", self.start_game)
 
+    # --- Utility: Cancel All Timers ---
+    def cancel_all_timers(self):
+        for timer_id in self.active_timers:
+            self.root.after_cancel(timer_id)
+        self.active_timers.clear()
+
     # --- Game Initialization ---
     def start_game(self, event=None):
-        if not self.in_menu:
-            return
+        # Cancel leftover timers if restarting
+        self.cancel_all_timers()
 
         self.in_menu = False
         self.canvas.delete("all")
@@ -63,7 +70,7 @@ class Game:
         self.start_time = time.time()
         self.enemies = []
         self.enemy_min = 0
-        self.enemy_max = 4  # start with slightly higher range
+        self.enemy_max = 4
         self.keys_pressed = set()
         self.running = True
 
@@ -77,11 +84,11 @@ class Game:
         self.root.bind("<KeyRelease>", self.key_release)
 
         # Start game loops
-        self.update_timer()
+        self.add_timer(self.update_timer, 1000)
         self.update_player_position()
         self.spawn_enemies()
         self.move_enemies()
-        self.level_up()
+        self.add_timer(self.level_up, LEVEL_UP_INTERVAL)
         self.check_collision()
 
     # --- Player Controls ---
@@ -117,7 +124,8 @@ class Game:
             self.player_x + PLAYER_SIZE // 2, self.player_y + PLAYER_SIZE // 2
         )
 
-        self.root.after(20, self.update_player_position)
+        timer_id = self.root.after(20, self.update_player_position)
+        self.active_timers.append(timer_id)
 
     # --- Timer ---
     def update_timer(self):
@@ -125,7 +133,8 @@ class Game:
             return
         elapsed = int(time.time() - self.start_time)
         self.canvas.itemconfig(self.timer_text, text=f"Time: {elapsed}")
-        self.root.after(1000, self.update_timer)
+        timer_id = self.root.after(1000, self.update_timer)
+        self.active_timers.append(timer_id)
 
     # --- Enemy Spawning ---
     def spawn_enemies(self):
@@ -152,9 +161,9 @@ class Game:
             dx = random.choice([-ENEMY_SPEED, ENEMY_SPEED])
             dy = random.choice([-ENEMY_SPEED, ENEMY_SPEED])
             self.enemies.append((enemy, dx, dy))
-            self.root.after(ENEMY_LIFETIME, lambda e=enemy: self.remove_enemy(e))
+            self.add_timer(lambda e=enemy: self.remove_enemy(e), ENEMY_LIFETIME)
 
-        self.root.after(ENEMY_SPAWN_INTERVAL, self.spawn_enemies)
+        self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
 
     def remove_enemy(self, enemy):
         for e in list(self.enemies):
@@ -170,7 +179,6 @@ class Game:
 
         for i, (enemy, dx, dy) in enumerate(list(self.enemies)):
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
-            # Bounce on wall
             if ex1 <= 0 or ex2 >= WINDOW_WIDTH:
                 dx = -dx
             if ey1 <= 0 or ey2 >= WINDOW_HEIGHT:
@@ -178,15 +186,16 @@ class Game:
             self.canvas.move(enemy, dx, dy)
             self.enemies[i] = (enemy, dx, dy)
 
-        self.root.after(50, self.move_enemies)
+        timer_id = self.root.after(50, self.move_enemies)
+        self.active_timers.append(timer_id)
 
     # --- Difficulty Scaling ---
     def level_up(self):
         if not self.running:
             return
         self.enemy_min += 3
-        self.enemy_max += 8  # grows faster
-        self.root.after(LEVEL_UP_INTERVAL, self.level_up)
+        self.enemy_max += 8
+        self.add_timer(self.level_up, LEVEL_UP_INTERVAL)
 
     # --- Collision Detection ---
     def check_collision(self):
@@ -200,29 +209,34 @@ class Game:
                 self.game_over()
                 return
 
-        self.root.after(30, self.check_collision)
+        timer_id = self.root.after(30, self.check_collision)
+        self.active_timers.append(timer_id)
+
+    # --- Add and Track Timers ---
+    def add_timer(self, func, delay):
+        """Schedule and track a repeating timer safely."""
+        timer_id = self.root.after(delay, func)
+        self.active_timers.append(timer_id)
+        return timer_id
 
     # --- Game Over ---
     def game_over(self):
         self.running = False
+        self.cancel_all_timers()  # Stop all ongoing loops
         elapsed = int(time.time() - self.start_time)
         score = elapsed * POINTS_PER_SECOND
 
-        # Display Game Over text
         self.canvas.create_text(
             WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 30,
             text=f"GAME OVER\nScore: {score}",
             fill="white", font=("Arial", 32, "bold")
         )
-
-        # Retry message
         self.canvas.create_text(
             WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 40,
             text="Click to Retry",
             fill="gray", font=("Arial", 20)
         )
 
-        # Allow retry
         self.in_menu = True
         self.canvas.bind("<Button-1>", self.start_game)
 
