@@ -33,7 +33,7 @@ class Game:
         # State control
         self.running = False
         self.in_menu = True
-        self.active_timers = []  # <-- track all timer IDs
+        self.active_timers = []  # track all timer IDs
 
         # Menu screen
         self.menu_text = self.canvas.create_text(
@@ -69,8 +69,8 @@ class Game:
         # Game variables
         self.start_time = time.time()
         self.enemies = []
-        self.enemy_min = 0
-        self.enemy_max = 4
+        self.enemy_min = 3   # <-- start with at least 3 enemies
+        self.enemy_max = 6
         self.keys_pressed = set()
         self.running = True
 
@@ -245,3 +245,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     game = Game(root)
     root.mainloop()
+
