@@ -33,7 +33,7 @@ POINTS_PER_SECOND = 10
 BOSS_SIZE = 100
 WARNING_COLOR = "#ff9999"  # harmless light red
 BOSS_COLOR = "red"
-BOSS_ATTACK_INTERVAL = 300  # rotation speed
+BOSS_ATTACK_INTERVAL = 300  # slower rotation timer
 SMALL_ENEMY_SIZE = 25
 BOSS_TOTAL_ATTACKS = 8
 
@@ -167,7 +167,6 @@ class Game:
     # --- Boss warning ---
     def start_boss_warning(self):
         if self.boss_warning: return
-        # Remove all enemies before boss
         for enemy, _, _ in self.enemies:
             self.canvas.delete(enemy)
         self.enemies.clear()
@@ -182,11 +181,8 @@ class Game:
         if self.boss_warning:
             self.canvas.delete(self.boss_warning)
             self.boss_warning = None
-
-        # Prevent any enemy spawns during boss
         self.boss_attack_running = True
         self.boss_attack_count = 0
-
         x0 = WINDOW_WIDTH//2 - BOSS_SIZE//2
         y0 = WINDOW_HEIGHT//2 - BOSS_SIZE//2
         x1 = WINDOW_WIDTH//2 + BOSS_SIZE//2
@@ -207,35 +203,30 @@ class Game:
         elif attack == 2:
             self.boss_attack_halfscreen()
 
-    # --- Cross attack ---
+    # --- Cross attack with full-length lines ---
     def boss_attack_cross(self):
         if not self.boss_attack_running: return
         for sq in self.attack_squares: self.canvas.delete(sq)
         self.attack_squares = []
 
         cx, cy = WINDOW_WIDTH//2, WINDOW_HEIGHT//2
-        lines = []
         step = SMALL_ENEMY_SIZE
-        # Vertical
-        for y in range(cy - BOSS_SIZE//2 - step, -step, -step):
-            lines.append((cx, y))
-        for y in range(cy + BOSS_SIZE//2 + step, WINDOW_HEIGHT + step, step):
-            lines.append((cx, y))
-        # Horizontal
-        for x in range(cx - BOSS_SIZE//2 - step, -step, -step):
-            lines.append((x, cy))
-        for x in range(cx + BOSS_SIZE//2 + step, WINDOW_WIDTH + step, step):
-            lines.append((x, cy))
+        lines = []
+
+        # Vertical and horizontal lines from boss to edges
+        for y in range(0, cy - BOSS_SIZE//2, step): lines.append((cx, y))
+        for y in range(cy + BOSS_SIZE//2, WINDOW_HEIGHT, step): lines.append((cx, y))
+        for x in range(0, cx - BOSS_SIZE//2, step): lines.append((x, cy))
+        for x in range(cx + BOSS_SIZE//2, WINDOW_WIDTH, step): lines.append((x, cy))
 
         for px, py in lines:
-            sq = self.canvas.create_rectangle(px-SMALL_ENEMY_SIZE//2, py-SMALL_ENEMY_SIZE//2,
-                                             px+SMALL_ENEMY_SIZE//2, py+SMALL_ENEMY_SIZE//2,
-                                             fill=WARNING_COLOR)
+            sq = self.canvas.create_rectangle(px-step//2, py-step//2, px+step//2, py+step//2, fill=WARNING_COLOR)
             self.attack_squares.append(sq)
 
-        # Turn red after 0.5s
+        # Turn solid red after 0.5s
         self.add_timer(lambda: [self.canvas.itemconfig(sq, fill=BOSS_COLOR) for sq in self.attack_squares], 500)
-        # Rotate slowly
+
+        # Start rotation clockwise
         self.rotate_cross(0, True)
 
     def rotate_cross(self, step, clockwise):
@@ -250,23 +241,25 @@ class Game:
             return
 
         cx, cy = WINDOW_WIDTH//2, WINDOW_HEIGHT//2
-        angle = math.radians(step*5*(1 if clockwise else -1))  # slower rotation
+        angle = math.radians(step * 2) * (1 if clockwise else -1)
+
         new_pos = []
         for sq in self.attack_squares:
             px1, py1, px2, py2 = self.canvas.coords(sq)
-            px = (px1 + px2) / 2
-            py = (py1 + py2) / 2
-            dx, dy = px - cx, py - cy
+            px = (px1 + px2)/2
+            py = (py1 + py2)/2
+            dx, dy = px-cx, py-cy
             nx = dx*math.cos(angle) - dy*math.sin(angle) + cx
             ny = dx*math.sin(angle) + dy*math.cos(angle) + cy
             new_pos.append((nx, ny))
 
         for sq, (nx, ny) in zip(self.attack_squares, new_pos):
-            self.canvas.coords(sq, nx-SMALL_ENEMY_SIZE//2, ny-SMALL_ENEMY_SIZE//2,
-                                     nx+SMALL_ENEMY_SIZE//2, ny+SMALL_ENEMY_SIZE//2)
+            self.canvas.coords(sq, nx-SMALL_ENEMY_SIZE/2, ny-SMALL_ENEMY_SIZE/2,
+                                     nx+SMALL_ENEMY_SIZE/2, ny+SMALL_ENEMY_SIZE/2)
+
         self.add_timer(lambda: self.rotate_cross(step+1, clockwise), BOSS_ATTACK_INTERVAL)
 
-    # --- Half-screen attack (sequential halves) ---
+    # --- Half-screen attack ---
     def boss_attack_halfscreen(self):
         if not self.boss_attack_running: return
         for sq in self.attack_squares: self.canvas.delete(sq)
@@ -288,48 +281,53 @@ class Game:
                     squares.append(sq)
             return squares
 
-        # Left half first
+        # Left half
         left_squares = spawn_half(0, half_width)
         self.attack_squares = left_squares
-
-        def make_left_red(): 
-            for sq in left_squares: self.canvas.itemconfig(sq, fill=BOSS_COLOR)
-        self.add_timer(make_left_red, 300)
+        self.add_timer(lambda: [self.canvas.itemconfig(sq, fill=BOSS_COLOR) for sq in left_squares], 500)
 
         def left_done():
             for sq in left_squares: self.canvas.delete(sq)
+            # Right half
             right_squares = spawn_half(half_width, WINDOW_WIDTH)
             self.attack_squares = right_squares
-            self.add_timer(lambda: [self.canvas.itemconfig(sq, fill=BOSS_COLOR) for sq in right_squares], 300)
+            self.add_timer(lambda: [self.canvas.itemconfig(sq, fill=BOSS_COLOR) for sq in right_squares], 500)
             self.add_timer(lambda: [self.canvas.delete(sq) for sq in right_squares], 2000)
-            self.add_timer(self.start_boss_attack, 2300)
+            self.add_timer(self.start_boss_attack, 2500)
 
-        self.add_timer(left_done, 2000)
+        self.add_timer(left_done, 2500)
 
     # --- End boss ---
     def end_boss(self):
         for sq in self.attack_squares: self.canvas.delete(sq)
+        if self.boss: self.canvas.delete(self.boss)
         self.attack_squares = []
+        self.boss = None
         self.boss_attack_running = False
-        if self.boss: self.canvas.delete(self.boss); self.boss = None
 
-    # --- Boss attack collision ---
+    # --- Boss collision ---
     def check_boss_collision(self):
         if not self.running:
             self.add_timer(self.check_boss_collision, 30)
             return
+    
         px1, py1, px2, py2 = self.canvas.coords(self.player)
+    
+        # Keep only existing squares
+        self.attack_squares = [sq for sq in self.attack_squares if self.canvas.coords(sq)]
+    
         for sq in self.attack_squares:
             sx1, sy1, sx2, sy2 = self.canvas.coords(sq)
-            color = self.canvas.itemcget(sq,"fill")
+            color = self.canvas.itemcget(sq, "fill")
             if color == BOSS_COLOR and not (px2 < sx1 or px1 > sx2 or py2 < sy1 or py1 > sy2):
                 self.game_over()
                 return
+    
         self.add_timer(self.check_boss_collision, 30)
-
     # --- Enemy spawning ---
     def spawn_enemies(self):
         if not self.running or self.boss_attack_running:
+            self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
             return
         num_enemies = random.randint(self.enemy_min, self.enemy_max)
         for _ in range(num_enemies):
@@ -349,6 +347,7 @@ class Game:
             self.add_timer(lambda e=enemy: self.remove_enemy(e), ENEMY_LIFETIME)
         self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
 
+    # --- Remove enemy ---
     def remove_enemy(self, enemy):
         for e in list(self.enemies):
             if e[0] == enemy:
