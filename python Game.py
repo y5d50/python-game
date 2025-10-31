@@ -3,7 +3,7 @@ Created on Wed Oct 29 14:41:36 2025
 CourseWork for CSC-44102-2025-SEM1-A
 @author: John Hamlyn 2201387701
 
-Survival Game using Tkinter with Boss Stage (Player collision with boss attacks)
+Survival Game using Tkinter with Boss Stage (Player health & safe warning squares)
 
 Acknowledgment:
 This project has benefited from the use of AI assistance (OpenAI's ChatGPT)
@@ -30,10 +30,16 @@ POINTS_PER_SECOND = 10
 
 # --- Boss Configuration ---
 BOSS_SIZE = 100
-WARNING_COLOR = "#ff9999"  # lighter red for harmless warning
+WARNING_COLOR = "#ff9999"  # harmless light red
 BOSS_COLOR = "red"
-BOSS_ATTACK_INTERVAL = 200  # ms per attack step
+BOSS_ATTACK_INTERVAL = 200  # ms per step
 SMALL_ENEMY_SIZE = 25
+BOSS_TOTAL_ATTACKS = 8  # number of attacks before disappearing
+
+# --- Health Configuration ---
+MAX_HEALTH = 5
+HEALTH_BAR_WIDTH = 150
+HEALTH_BAR_HEIGHT = 20
 
 class Game:
     def __init__(self, root):
@@ -47,12 +53,18 @@ class Game:
         self.active_timers = []
         self.keys_pressed = set()
         self.enemies = []
+        self.temp_enemies = []  # for boss explosion squares
+
+        # Player health
+        self.health = MAX_HEALTH
+        self.health_bar = None
 
         # Boss state
         self.boss_warning = None
         self.boss = None
         self.boss_attack_running = False
         self.attack_squares = []
+        self.boss_attack_count = 0
 
         # Menu
         self.menu_text = self.canvas.create_text(
@@ -95,8 +107,15 @@ class Game:
             10, 10, anchor="nw", fill="white", font=("Arial",16), text="Time:0"
         )
 
+        # Health bar
+        self.health = MAX_HEALTH
+        self.health_bar = self.canvas.create_rectangle(
+            10, 40, 10+HEALTH_BAR_WIDTH, 40+HEALTH_BAR_HEIGHT, fill="green"
+        )
+
         # Enemies
         self.enemies = []
+        self.temp_enemies = []
         self.enemy_min = 3
         self.enemy_max = 6
 
@@ -105,6 +124,7 @@ class Game:
         self.boss = None
         self.boss_attack_running = False
         self.attack_squares = []
+        self.boss_attack_count = 0
 
         self.running = True
         self.keys_pressed.clear()
@@ -119,6 +139,7 @@ class Game:
         self.move_enemies()
         self.add_timer(self.level_up, LEVEL_UP_INTERVAL)
         self.check_collision()
+        self.check_boss_collision()
 
     # --- Player controls ---
     def key_press(self, event):
@@ -152,8 +173,11 @@ class Game:
         elapsed = int(time.time() - self.start_time)
         self.canvas.itemconfig(self.timer_text, text=f"Time: {elapsed}")
 
-        if elapsed % 30 == 29: self.start_boss_warning()
-        elif elapsed % 30 == 0 and elapsed > 0: self.spawn_boss()
+        # Boss warning 1 second before boss
+        if elapsed % 30 == 29 and not self.boss_attack_running:
+            self.start_boss_warning()
+        elif elapsed % 30 == 0 and elapsed > 0 and not self.boss_attack_running:
+            self.spawn_boss()
 
         self.add_timer(self.update_timer, 1000)
 
@@ -179,30 +203,31 @@ class Game:
         y1 = WINDOW_HEIGHT//2 + BOSS_SIZE//2
         self.boss = self.canvas.create_rectangle(x0, y0, x1, y1, fill=BOSS_COLOR)
         self.boss_attack_running = True
+        self.boss_attack_count = 0
         self.start_boss_attack()
-        self.check_boss_collision()  # start collision detection for boss attacks
 
     # --- Boss attack cycle ---
     def start_boss_attack(self):
         if not self.boss_attack_running: return
+        self.boss_attack_count += 1
+        if self.boss_attack_count > BOSS_TOTAL_ATTACKS:
+            self.end_boss()
+            return
         attack = random.choice([1,2,3,4])
         if attack==1: self.boss_attack_cross()
         elif attack==2: self.boss_attack_halfscreen()
         else: self.boss_attack_dummy()
 
-    # --- Attack 1: rotating cross (edges) ---
+    # --- Attack 1: cross ---
     def boss_attack_cross(self):
         if not self.boss_attack_running: return
-        if hasattr(self, "attack_squares"):
-            for sq in self.attack_squares: self.canvas.delete(sq)
+        for sq in self.attack_squares: self.canvas.delete(sq)
         self.attack_squares = []
 
         cx, cy = WINDOW_WIDTH//2, WINDOW_HEIGHT//2
         positions = [
-            (cx, SMALL_ENEMY_SIZE//2),  # top
-            (cx, WINDOW_HEIGHT - SMALL_ENEMY_SIZE//2),  # bottom
-            (SMALL_ENEMY_SIZE//2, cy),  # left
-            (WINDOW_WIDTH - SMALL_ENEMY_SIZE//2, cy)  # right
+            (cx, SMALL_ENEMY_SIZE//2), (cx, WINDOW_HEIGHT - SMALL_ENEMY_SIZE//2),
+            (SMALL_ENEMY_SIZE//2, cy), (WINDOW_WIDTH - SMALL_ENEMY_SIZE//2, cy)
         ]
         for px, py in positions:
             sq = self.canvas.create_rectangle(
@@ -211,33 +236,13 @@ class Game:
                 fill=WARNING_COLOR
             )
             self.attack_squares.append(sq)
-
         self.add_timer(lambda: self.make_squares_solid(self.attack_squares), 1000)
-        self.rotate_cross(positions, cx, cy, 0, True)
-
-    def make_squares_solid(self, squares):
-        for sq in squares: self.canvas.itemconfig(sq, fill=BOSS_COLOR)
-        self.add_timer(lambda: [self.canvas.delete(sq) for sq in squares], 500)  # disappear after 0.5s
-
-    def rotate_cross(self, positions, cx, cy, step, clockwise=True):
-        if not self.boss_attack_running or step>36:
-            self.add_timer(self.start_boss_attack, 500)
-            return
-        angle = math.radians(step*10*(1 if clockwise else -1))
-        new_pos=[]
-        for px, py in positions:
-            dx, dy = px-cx, py-cy
-            nx = dx*math.cos(angle)-dy*math.sin(angle)+cx
-            ny = dx*math.sin(angle)+dy*math.cos(angle)+cy
-            new_pos.append((nx, ny))
-        for sq, (nx, ny) in zip(self.attack_squares, new_pos):
-            self.canvas.coords(sq, nx-SMALL_ENEMY_SIZE//2, ny-SMALL_ENEMY_SIZE//2,
-                                   nx+SMALL_ENEMY_SIZE//2, ny+SMALL_ENEMY_SIZE//2)
-        self.add_timer(lambda: self.rotate_cross(positions, cx, cy, step+1, clockwise), BOSS_ATTACK_INTERVAL)
+        self.add_timer(self.start_boss_attack, 3000)
 
     # --- Attack 2: half-screen ---
     def boss_attack_halfscreen(self):
         if not self.boss_attack_running: return
+        for sq in self.attack_squares: self.canvas.delete(sq)
         self.attack_squares=[]
         padding=30
         for i in range(padding, WINDOW_WIDTH//2, SMALL_ENEMY_SIZE*2):
@@ -250,28 +255,71 @@ class Game:
         self.add_timer(lambda: self.make_squares_solid(self.attack_squares), 1000)
         self.add_timer(self.start_boss_attack, 3000)
 
-    # --- Dummy attacks ---
+    # --- Dummy attack ---
     def boss_attack_dummy(self):
-        if self.boss_attack_running:
-            self.add_timer(self.start_boss_attack, 1000)
+        self.add_timer(self.start_boss_attack, 2000)
+
+    # --- Make warning squares solid and harmful ---
+    def make_squares_solid(self, squares):
+        for sq in squares: self.canvas.itemconfig(sq, fill=BOSS_COLOR)
+        self.add_timer(lambda: [self.canvas.delete(sq) for sq in squares], 500)
 
     # --- Boss attack collision with player ---
     def check_boss_collision(self):
         if not self.running or not self.boss_attack_running:
+            self.add_timer(self.check_boss_collision, 30)
             return
         px1, py1, px2, py2 = self.canvas.coords(self.player)
         for sq in self.attack_squares:
+            color = self.canvas.itemcget(sq, "fill")
+            if color != BOSS_COLOR:
+                continue
             sx1, sy1, sx2, sy2 = self.canvas.coords(sq)
             if not (px2 < sx1 or px1 > sx2 or py2 < sy1 or py1 > sy2):
-                self.game_over()
-                return
+                self.reduce_health()
+                break
         self.add_timer(self.check_boss_collision, 30)
+
+    # --- End boss ---
+    def end_boss(self):
+        # Delete boss
+        if self.boss: self.canvas.delete(self.boss)
+        self.boss = None
+        self.boss_attack_running = False
+        # Spawn 10 temporary enemies
+        self.temp_enemies=[]
+        for _ in range(10):
+            x = random.randint(ENEMY_SIZE, WINDOW_WIDTH - ENEMY_SIZE)
+            y = random.randint(ENEMY_SIZE, WINDOW_HEIGHT - ENEMY_SIZE)
+            sq = self.canvas.create_rectangle(
+                x-ENEMY_SIZE//2, y-ENEMY_SIZE//2,
+                x+ENEMY_SIZE//2, y+ENEMY_SIZE//2, fill="red"
+            )
+            self.temp_enemies.append(sq)
+
+    # --- Health management ---
+    def reduce_health(self):
+        if self.health <= 0: return
+        self.health -= 1
+        self.update_health_bar()
+        if self.health <= 0:
+            self.game_over()
+
+    def update_health_bar(self):
+        width = HEALTH_BAR_WIDTH * self.health / MAX_HEALTH
+        self.canvas.coords(self.health_bar, 10, 40, 10 + width, 40 + HEALTH_BAR_HEIGHT)
+        if self.health <= 2: self.canvas.itemconfig(self.health_bar, fill="red")
+        elif self.health <= 4: self.canvas.itemconfig(self.health_bar, fill="yellow")
+        else: self.canvas.itemconfig(self.health_bar, fill="green")
 
     # --- Enemy spawning ---
     def spawn_enemies(self):
-        if not self.running:
+        if not self.running or self.boss_attack_running:
+            # Remove temp enemies after boss ends
+            for sq in self.temp_enemies: self.canvas.delete(sq)
+            self.temp_enemies=[]
+            self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
             return
-
         num_enemies = random.randint(self.enemy_min, self.enemy_max)
         for _ in range(num_enemies):
             for _ in range(20):
@@ -282,7 +330,6 @@ class Game:
                     break
             else:
                 continue
-
             enemy = self.canvas.create_rectangle(
                 x - ENEMY_SIZE // 2, y - ENEMY_SIZE // 2,
                 x + ENEMY_SIZE // 2, y + ENEMY_SIZE // 2,
@@ -292,7 +339,6 @@ class Game:
             dy = random.choice([-ENEMY_SPEED, ENEMY_SPEED])
             self.enemies.append((enemy, dx, dy))
             self.add_timer(lambda e=enemy: self.remove_enemy(e), ENEMY_LIFETIME)
-
         self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
 
     def remove_enemy(self, enemy):
@@ -306,45 +352,31 @@ class Game:
     def move_enemies(self):
         if not self.running:
             return
-
         for i, (enemy, dx, dy) in enumerate(list(self.enemies)):
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
             cx = (ex1 + ex2) / 2
             cy = (ey1 + ey2) / 2
-
-            # Wall bounce
-            if ex1 <= 0 or ex2 >= WINDOW_WIDTH:
-                dx = -dx
-            if ey1 <= 0 or ey2 >= WINDOW_HEIGHT:
-                dy = -dy
-
-            # Enemy collisions
+            if ex1 <= 0 or ex2 >= WINDOW_WIDTH: dx = -dx
+            if ey1 <= 0 or ey2 >= WINDOW_HEIGHT: dy = -dy
             for j, (other_enemy, odx, ody) in enumerate(self.enemies):
-                if i == j:
-                    continue
+                if i == j: continue
                 ox1, oy1, ox2, oy2 = self.canvas.coords(other_enemy)
                 ocx = (ox1 + ox2) / 2
                 ocy = (oy1 + oy2) / 2
-
                 dist = math.hypot(cx - ocx, cy - ocy)
                 min_dist = ENEMY_SIZE
                 if dist < min_dist and dist != 0:
-                    # Normalized collision vector
                     nx = (cx - ocx) / dist
                     ny = (cy - ocy) / dist
-
-                    # --- Separate overlapping enemies ---
                     overlap = min_dist - dist
                     cx += nx * (overlap / 2)
                     cy += ny * (overlap / 2)
                     ocx -= nx * (overlap / 2)
                     ocy -= ny * (overlap / 2)
                     self.canvas.coords(enemy, cx - ENEMY_SIZE / 2, cy - ENEMY_SIZE / 2,
-                                                 cx + ENEMY_SIZE / 2, cy + ENEMY_SIZE / 2)
+                                               cx + ENEMY_SIZE / 2, cy + ENEMY_SIZE / 2)
                     self.canvas.coords(other_enemy, ocx - ENEMY_SIZE / 2, ocy - ENEMY_SIZE / 2,
-                                                      ocx + ENEMY_SIZE / 2, ocy + ENEMY_SIZE / 2)
-
-                    # Reflect velocities
+                                                  ocx + ENEMY_SIZE / 2, ocy + ENEMY_SIZE / 2)
                     dvx = dx - odx
                     dvy = dy - ody
                     dot = dvx * nx + dvy * ny
@@ -353,11 +385,8 @@ class Game:
                     odx += dot * nx
                     ody += dot * ny
                     self.enemies[j] = (other_enemy, odx, ody)
-
-            # Move enemy
             self.canvas.move(enemy, dx, dy)
             self.enemies[i] = (enemy, dx, dy)
-
         self.add_timer(self.move_enemies, 50)
 
     # --- Difficulty scaling ---
@@ -376,17 +405,17 @@ class Game:
         for enemy, _, _ in self.enemies:
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
             if not (px2 < ex1 or px1 > ex2 or py2 < ey1 or py1 > ey2):
-                self.game_over()
-                return
+                self.reduce_health()
+                break
         self.add_timer(self.check_collision, 30)
 
     # --- Game over ---
     def game_over(self):
         self.running = False
+        self.boss_attack_running = False
         self.cancel_all_timers()
         elapsed = int(time.time() - self.start_time)
         score = elapsed * POINTS_PER_SECOND
-
         self.canvas.create_text(
             WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 30,
             text=f"GAME OVER\nScore: {score}",
@@ -398,8 +427,7 @@ class Game:
             fill="gray", font=("Arial", 20)
         )
 
-
-# --- Run Game ---
+# --- Run game ---
 if __name__=="__main__":
     root = tk.Tk()
     game = Game(root)
