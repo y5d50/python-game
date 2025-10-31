@@ -9,8 +9,8 @@ Acknowledgment:
 This project has benefited from the use of AI assistance (OpenAI's ChatGPT)
 for code optimization, debugging, and providing guidance on structuring 
 game logic and event handling.
-
 """
+
 import tkinter as tk
 import random
 import time
@@ -200,11 +200,11 @@ class Game:
                 self.enemies.remove(e)
                 break
 
-    # --- Enemy Movement ---
+    # --- Enemy Movement with Realistic Bouncing ---
     def move_enemies(self):
         """
         Move all enemies on the canvas.
-        Enemies bounce off window edges.
+        Enemies bounce off window edges and reflect off each other realistically.
         Loops every 50 ms.
         """
         if not self.running:
@@ -212,13 +212,50 @@ class Game:
 
         for i, (enemy, dx, dy) in enumerate(list(self.enemies)):
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
+            cx = (ex1 + ex2) / 2
+            cy = (ey1 + ey2) / 2
+
+            # Bounce off walls
             if ex1 <= 0 or ex2 >= WINDOW_WIDTH:
                 dx = -dx
             if ey1 <= 0 or ey2 >= WINDOW_HEIGHT:
                 dy = -dy
+
+            # Bounce off other enemies realistically
+            for j, (other_enemy, odx, ody) in enumerate(self.enemies):
+                if i == j:
+                    continue
+                ox1, oy1, ox2, oy2 = self.canvas.coords(other_enemy)
+                ocx = (ox1 + ox2) / 2
+                ocy = (oy1 + oy2) / 2
+
+                # Compute distance between centers
+                dist = math.hypot(cx - ocx, cy - ocy)
+                min_dist = ENEMY_SIZE
+                if dist < min_dist and dist != 0:
+                    # Normalized collision vector
+                    nx = (cx - ocx) / dist
+                    ny = (cy - ocy) / dist
+
+                    # Dot product of relative velocities along collision vector
+                    dvx = dx - odx
+                    dvy = dy - ody
+                    dot = dvx * nx + dvy * ny
+
+                    # Reflect velocities along collision vector
+                    dx -= dot * nx
+                    dy -= dot * ny
+                    odx += dot * nx
+                    ody += dot * ny
+
+                    # Update other enemy
+                    self.enemies[j] = (other_enemy, odx, ody)
+
+            # Move enemy
             self.canvas.move(enemy, dx, dy)
             self.enemies[i] = (enemy, dx, dy)
 
+        # Schedule next movement
         timer_id = self.root.after(50, self.move_enemies)
         self.active_timers.append(timer_id)
 
@@ -247,7 +284,6 @@ class Game:
         px1, py1, px2, py2 = self.canvas.coords(self.player)
         for enemy, _, _ in self.enemies:
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
-            # Rectangle collision detection
             if not (px2 < ex1 or px1 > ex2 or py2 < ey1 or py1 > ey2):
                 self.game_over()
                 return
@@ -269,7 +305,7 @@ class Game:
         Allows click to restart the game using the same click handler.
         """
         self.running = False
-        self.cancel_all_timers()  # Stop all ongoing loops
+        self.cancel_all_timers()
         elapsed = int(time.time() - self.start_time)
         score = elapsed * POINTS_PER_SECOND
 
@@ -290,4 +326,5 @@ if __name__ == "__main__":
     root = tk.Tk()
     game = Game(root)
     root.mainloop()
+
 
