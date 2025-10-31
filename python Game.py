@@ -36,35 +36,33 @@ class Game:
         self.canvas = tk.Canvas(root, width=WINDOW_WIDTH, height=WINDOW_HEIGHT, bg="black")
         self.canvas.pack()
 
-        # Track whether the game is currently running
         self.running = False
-        # Track all active timers to cancel on game over or restart
         self.active_timers = []
 
-        # Display initial menu text
+        # Initial menu text
         self.menu_text = self.canvas.create_text(
             WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2,
             text="Click to Play",
             fill="white", font=("Arial", 36, "bold")
         )
-
-        # Bind click to start game (works for menu or retry)
         self.canvas.bind("<Button-1>", self.start_game)
 
-    # --- Cancel all active timers safely ---
+    # --- Timer management ---
     def cancel_all_timers(self):
-        """Cancel all scheduled Tkinter 'after' timers to prevent duplicates."""
         for timer_id in self.active_timers:
             self.root.after_cancel(timer_id)
         self.active_timers.clear()
 
-    # --- Game Start ---
+    def add_timer(self, func, delay):
+        timer_id = self.root.after(delay, func)
+        self.active_timers.append(timer_id)
+        return timer_id
+
+    # --- Game start ---
     def start_game(self, event=None):
-        """Initialize a new game. Guard ensures clicks during gameplay do nothing."""
         if self.running:
             return  # Prevent restarting mid-game
 
-        # Clear any leftover timers and canvas elements
         self.cancel_all_timers()
         self.canvas.delete("all")
 
@@ -77,7 +75,6 @@ class Game:
             fill="cyan"
         )
 
-        # Game state variables
         self.start_time = time.time()
         self.enemies = []
         self.enemy_min = 3
@@ -85,41 +82,33 @@ class Game:
         self.keys_pressed = set()
         self.running = True
 
-        # Display timer
+        # Timer display
         self.timer_text = self.canvas.create_text(
             10, 10, anchor="nw", fill="white", font=("Arial", 16), text="Time: 0"
         )
 
-        # Bind keyboard controls
         self.root.bind("<KeyPress>", self.key_press)
         self.root.bind("<KeyRelease>", self.key_release)
 
         # Start game loops
-        self.add_timer(self.update_timer, 1000)      # Update timer every second
-        self.update_player_position()                # Start player movement loop
-        self.spawn_enemies()                         # Spawn initial enemies
-        self.move_enemies()                          # Start enemy movement loop
-        self.add_timer(self.level_up, LEVEL_UP_INTERVAL)  # Schedule difficulty increase
-        self.check_collision()                       # Start collision detection loop
+        self.add_timer(self.update_timer, 1000)
+        self.update_player_position()
+        self.spawn_enemies()
+        self.move_enemies()
+        self.add_timer(self.level_up, LEVEL_UP_INTERVAL)
+        self.check_collision()
 
-    # --- Player Controls ---
+    # --- Player controls ---
     def key_press(self, event):
-        """Track keys pressed for smooth movement."""
         if not self.running:
             return
         self.keys_pressed.add(event.keysym.lower())
 
     def key_release(self, event):
-        """Remove keys from tracking when released."""
         if event.keysym.lower() in self.keys_pressed:
             self.keys_pressed.remove(event.keysym.lower())
 
     def update_player_position(self):
-        """
-        Move the player according to keys pressed.
-        Keep the player within the window bounds.
-        This method loops every 20 ms using Tkinter 'after'.
-        """
         if not self.running:
             return
 
@@ -132,44 +121,32 @@ class Game:
         if 'd' in self.keys_pressed:
             self.player_x += PLAYER_SPEED
 
-        # Keep player inside window boundaries
         self.player_x = max(PLAYER_SIZE // 2, min(WINDOW_WIDTH - PLAYER_SIZE // 2, self.player_x))
         self.player_y = max(PLAYER_SIZE // 2, min(WINDOW_HEIGHT - PLAYER_SIZE // 2, self.player_y))
 
-        # Update canvas coordinates
         self.canvas.coords(
             self.player,
             self.player_x - PLAYER_SIZE // 2, self.player_y - PLAYER_SIZE // 2,
             self.player_x + PLAYER_SIZE // 2, self.player_y + PLAYER_SIZE // 2
         )
 
-        # Loop
-        timer_id = self.root.after(20, self.update_player_position)
-        self.active_timers.append(timer_id)
+        self.add_timer(self.update_player_position, 20)
 
-    # --- Game Timer ---
+    # --- Game timer ---
     def update_timer(self):
-        """Update the on-screen survival timer and schedule next update."""
         if not self.running:
             return
         elapsed = int(time.time() - self.start_time)
         self.canvas.itemconfig(self.timer_text, text=f"Time: {elapsed}")
-        timer_id = self.root.after(1000, self.update_timer)
-        self.active_timers.append(timer_id)
+        self.add_timer(self.update_timer, 1000)
 
-    # --- Enemy Spawning ---
+    # --- Enemy spawning ---
     def spawn_enemies(self):
-        """
-        Spawn a random number of enemies at random positions.
-        Ensures enemies do not spawn on top of the player.
-        Each enemy is scheduled to be removed after ENEMY_LIFETIME.
-        """
         if not self.running:
             return
 
         num_enemies = random.randint(self.enemy_min, self.enemy_max)
         for _ in range(num_enemies):
-            # Try to find a spawn location not too close to player
             for _ in range(20):
                 x = random.randint(ENEMY_SIZE, WINDOW_WIDTH - ENEMY_SIZE)
                 y = random.randint(ENEMY_SIZE + 30, WINDOW_HEIGHT - ENEMY_SIZE)
@@ -177,7 +154,7 @@ class Game:
                 if dist > PLAYER_SIZE * 2:
                     break
             else:
-                continue  # skip if no valid location found
+                continue
 
             enemy = self.canvas.create_rectangle(
                 x - ENEMY_SIZE // 2, y - ENEMY_SIZE // 2,
@@ -189,24 +166,17 @@ class Game:
             self.enemies.append((enemy, dx, dy))
             self.add_timer(lambda e=enemy: self.remove_enemy(e), ENEMY_LIFETIME)
 
-        # Schedule next enemy spawn
         self.add_timer(self.spawn_enemies, ENEMY_SPAWN_INTERVAL)
 
     def remove_enemy(self, enemy):
-        """Remove a specific enemy from canvas and enemy list."""
         for e in list(self.enemies):
             if e[0] == enemy:
                 self.canvas.delete(enemy)
                 self.enemies.remove(e)
                 break
 
-    # --- Enemy Movement with Realistic Bouncing ---
+    # --- Enemy movement with separation and reflection ---
     def move_enemies(self):
-        """
-        Move all enemies on the canvas.
-        Enemies bounce off window edges and reflect off each other realistically.
-        Loops every 50 ms.
-        """
         if not self.running:
             return
 
@@ -215,13 +185,13 @@ class Game:
             cx = (ex1 + ex2) / 2
             cy = (ey1 + ey2) / 2
 
-            # Bounce off walls
+            # Wall bounce
             if ex1 <= 0 or ex2 >= WINDOW_WIDTH:
                 dx = -dx
             if ey1 <= 0 or ey2 >= WINDOW_HEIGHT:
                 dy = -dy
 
-            # Bounce off other enemies realistically
+            # Enemy collisions
             for j, (other_enemy, odx, ody) in enumerate(self.enemies):
                 if i == j:
                     continue
@@ -229,7 +199,6 @@ class Game:
                 ocx = (ox1 + ox2) / 2
                 ocy = (oy1 + oy2) / 2
 
-                # Compute distance between centers
                 dist = math.hypot(cx - ocx, cy - ocy)
                 min_dist = ENEMY_SIZE
                 if dist < min_dist and dist != 0:
@@ -237,73 +206,55 @@ class Game:
                     nx = (cx - ocx) / dist
                     ny = (cy - ocy) / dist
 
-                    # Dot product of relative velocities along collision vector
+                    # --- Separate overlapping enemies ---
+                    overlap = min_dist - dist
+                    cx += nx * (overlap / 2)
+                    cy += ny * (overlap / 2)
+                    ocx -= nx * (overlap / 2)
+                    ocy -= ny * (overlap / 2)
+                    self.canvas.coords(enemy, cx - ENEMY_SIZE / 2, cy - ENEMY_SIZE / 2,
+                                                 cx + ENEMY_SIZE / 2, cy + ENEMY_SIZE / 2)
+                    self.canvas.coords(other_enemy, ocx - ENEMY_SIZE / 2, ocy - ENEMY_SIZE / 2,
+                                                      ocx + ENEMY_SIZE / 2, ocy + ENEMY_SIZE / 2)
+
+                    # Reflect velocities
                     dvx = dx - odx
                     dvy = dy - ody
                     dot = dvx * nx + dvy * ny
-
-                    # Reflect velocities along collision vector
                     dx -= dot * nx
                     dy -= dot * ny
                     odx += dot * nx
                     ody += dot * ny
-
-                    # Update other enemy
                     self.enemies[j] = (other_enemy, odx, ody)
 
             # Move enemy
             self.canvas.move(enemy, dx, dy)
             self.enemies[i] = (enemy, dx, dy)
 
-        # Schedule next movement
-        timer_id = self.root.after(50, self.move_enemies)
-        self.active_timers.append(timer_id)
+        self.add_timer(self.move_enemies, 50)
 
-    # --- Difficulty Scaling ---
+    # --- Difficulty scaling ---
     def level_up(self):
-        """
-        Increase number of enemies over time to make game harder.
-        Loops every LEVEL_UP_INTERVAL milliseconds.
-        """
         if not self.running:
             return
         self.enemy_min += 3
         self.enemy_max += 7
         self.add_timer(self.level_up, LEVEL_UP_INTERVAL)
 
-    # --- Collision Detection ---
+    # --- Collision detection ---
     def check_collision(self):
-        """
-        Check if any enemy overlaps with the player.
-        If so, end the game.
-        Loops every 30 ms.
-        """
         if not self.running:
             return
-
         px1, py1, px2, py2 = self.canvas.coords(self.player)
         for enemy, _, _ in self.enemies:
             ex1, ey1, ex2, ey2 = self.canvas.coords(enemy)
             if not (px2 < ex1 or px1 > ex2 or py2 < ey1 or py1 > ey2):
                 self.game_over()
                 return
+        self.add_timer(self.check_collision, 30)
 
-        timer_id = self.root.after(30, self.check_collision)
-        self.active_timers.append(timer_id)
-
-    # --- Timer Utility ---
-    def add_timer(self, func, delay):
-        """Schedule a function to run after a delay and track it for cancellation."""
-        timer_id = self.root.after(delay, func)
-        self.active_timers.append(timer_id)
-        return timer_id
-
-    # --- Game Over ---
+    # --- Game over ---
     def game_over(self):
-        """
-        Stop all game loops and display final score.
-        Allows click to restart the game using the same click handler.
-        """
         self.running = False
         self.cancel_all_timers()
         elapsed = int(time.time() - self.start_time)
@@ -321,10 +272,8 @@ class Game:
         )
 
 
-# --- Run Game ---
+# --- Run game ---
 if __name__ == "__main__":
     root = tk.Tk()
     game = Game(root)
     root.mainloop()
-
-
