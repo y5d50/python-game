@@ -3,12 +3,12 @@ Created on Wed Oct 29 14:41:36 2025
 CourseWork for CSC-44102-2025-SEM1-A
 @author: John Hamlyn 2201387701
 
-Survival Game using Tkinter
+Survival Game using Tkinter with Boss Stage (Player collision with boss attacks)
 
 Acknowledgment:
 This project has benefited from the use of AI assistance (OpenAI's ChatGPT)
 for code optimization, debugging, and providing guidance on structuring 
-game logic and event handling.
+game logic, event handling, and implementing boss mechanics.
 """
 
 import tkinter as tk
@@ -23,11 +23,17 @@ PLAYER_SIZE = 30
 ENEMY_SIZE = 25
 PLAYER_SPEED = 6
 ENEMY_SPEED = PLAYER_SPEED * 1.15
-ENEMY_SPAWN_INTERVAL = 10000       # every 10 seconds
-ENEMY_LIFETIME = 9500              # 9.5 seconds
-LEVEL_UP_INTERVAL = 20000          # every 20 seconds
+ENEMY_SPAWN_INTERVAL = 10000
+ENEMY_LIFETIME = 9500
+LEVEL_UP_INTERVAL = 20000
 POINTS_PER_SECOND = 10
 
+# --- Boss Configuration ---
+BOSS_SIZE = 100
+WARNING_COLOR = "#ff9999"  # lighter red for harmless warning
+BOSS_COLOR = "red"
+BOSS_ATTACK_INTERVAL = 200  # ms per attack step
+SMALL_ENEMY_SIZE = 25
 
 class Game:
     def __init__(self, root):
@@ -36,10 +42,19 @@ class Game:
         self.canvas = tk.Canvas(root, width=WINDOW_WIDTH, height=WINDOW_HEIGHT, bg="black")
         self.canvas.pack()
 
+        # Game state
         self.running = False
         self.active_timers = []
+        self.keys_pressed = set()
+        self.enemies = []
 
-        # Initial menu text
+        # Boss state
+        self.boss_warning = None
+        self.boss = None
+        self.boss_attack_running = False
+        self.attack_squares = []
+
+        # Menu
         self.menu_text = self.canvas.create_text(
             WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2,
             text="Click to Play",
@@ -61,36 +76,43 @@ class Game:
     # --- Game start ---
     def start_game(self, event=None):
         if self.running:
-            return  # Prevent restarting mid-game
-
+            return
         self.cancel_all_timers()
         self.canvas.delete("all")
 
-        # Player setup
+        # Player
         self.player_x = WINDOW_WIDTH // 2
         self.player_y = WINDOW_HEIGHT // 2
         self.player = self.canvas.create_rectangle(
-            self.player_x - PLAYER_SIZE // 2, self.player_y - PLAYER_SIZE // 2,
-            self.player_x + PLAYER_SIZE // 2, self.player_y + PLAYER_SIZE // 2,
+            self.player_x - PLAYER_SIZE//2, self.player_y - PLAYER_SIZE//2,
+            self.player_x + PLAYER_SIZE//2, self.player_y + PLAYER_SIZE//2,
             fill="cyan"
         )
 
+        # Timer
         self.start_time = time.time()
+        self.timer_text = self.canvas.create_text(
+            10, 10, anchor="nw", fill="white", font=("Arial",16), text="Time:0"
+        )
+
+        # Enemies
         self.enemies = []
         self.enemy_min = 3
         self.enemy_max = 6
-        self.keys_pressed = set()
-        self.running = True
 
-        # Timer display
-        self.timer_text = self.canvas.create_text(
-            10, 10, anchor="nw", fill="white", font=("Arial", 16), text="Time: 0"
-        )
+        # Boss
+        self.boss_warning = None
+        self.boss = None
+        self.boss_attack_running = False
+        self.attack_squares = []
+
+        self.running = True
+        self.keys_pressed.clear()
 
         self.root.bind("<KeyPress>", self.key_press)
         self.root.bind("<KeyRelease>", self.key_release)
 
-        # Start game loops
+        # Loops
         self.add_timer(self.update_timer, 1000)
         self.update_player_position()
         self.spawn_enemies()
@@ -100,8 +122,7 @@ class Game:
 
     # --- Player controls ---
     def key_press(self, event):
-        if not self.running:
-            return
+        if not self.running: return
         self.keys_pressed.add(event.keysym.lower())
 
     def key_release(self, event):
@@ -109,36 +130,142 @@ class Game:
             self.keys_pressed.remove(event.keysym.lower())
 
     def update_player_position(self):
-        if not self.running:
-            return
+        if not self.running: return
+        if 'w' in self.keys_pressed: self.player_y -= PLAYER_SPEED
+        if 's' in self.keys_pressed: self.player_y += PLAYER_SPEED
+        if 'a' in self.keys_pressed: self.player_x -= PLAYER_SPEED
+        if 'd' in self.keys_pressed: self.player_x += PLAYER_SPEED
 
-        if 'w' in self.keys_pressed:
-            self.player_y -= PLAYER_SPEED
-        if 's' in self.keys_pressed:
-            self.player_y += PLAYER_SPEED
-        if 'a' in self.keys_pressed:
-            self.player_x -= PLAYER_SPEED
-        if 'd' in self.keys_pressed:
-            self.player_x += PLAYER_SPEED
-
-        self.player_x = max(PLAYER_SIZE // 2, min(WINDOW_WIDTH - PLAYER_SIZE // 2, self.player_x))
-        self.player_y = max(PLAYER_SIZE // 2, min(WINDOW_HEIGHT - PLAYER_SIZE // 2, self.player_y))
+        self.player_x = max(PLAYER_SIZE//2, min(WINDOW_WIDTH - PLAYER_SIZE//2, self.player_x))
+        self.player_y = max(PLAYER_SIZE//2, min(WINDOW_HEIGHT - PLAYER_SIZE//2, self.player_y))
 
         self.canvas.coords(
             self.player,
-            self.player_x - PLAYER_SIZE // 2, self.player_y - PLAYER_SIZE // 2,
-            self.player_x + PLAYER_SIZE // 2, self.player_y + PLAYER_SIZE // 2
+            self.player_x - PLAYER_SIZE//2, self.player_y - PLAYER_SIZE//2,
+            self.player_x + PLAYER_SIZE//2, self.player_y + PLAYER_SIZE//2
         )
-
         self.add_timer(self.update_player_position, 20)
 
-    # --- Game timer ---
+    # --- Game timer and boss scheduling ---
     def update_timer(self):
-        if not self.running:
-            return
+        if not self.running: return
         elapsed = int(time.time() - self.start_time)
         self.canvas.itemconfig(self.timer_text, text=f"Time: {elapsed}")
+
+        if elapsed % 30 == 29: self.start_boss_warning()
+        elif elapsed % 30 == 0 and elapsed > 0: self.spawn_boss()
+
         self.add_timer(self.update_timer, 1000)
+
+    # --- Boss warning ---
+    def start_boss_warning(self):
+        if self.boss_warning: return
+        for enemy, _, _ in self.enemies: self.canvas.delete(enemy)
+        self.enemies.clear()
+        x0 = WINDOW_WIDTH//2 - BOSS_SIZE//2
+        y0 = WINDOW_HEIGHT//2 - BOSS_SIZE//2
+        x1 = WINDOW_WIDTH//2 + BOSS_SIZE//2
+        y1 = WINDOW_HEIGHT//2 + BOSS_SIZE//2
+        self.boss_warning = self.canvas.create_rectangle(x0, y0, x1, y1, fill=WARNING_COLOR)
+
+    # --- Spawn solid boss ---
+    def spawn_boss(self):
+        if self.boss_warning:
+            self.canvas.delete(self.boss_warning)
+            self.boss_warning = None
+        x0 = WINDOW_WIDTH//2 - BOSS_SIZE//2
+        y0 = WINDOW_HEIGHT//2 - BOSS_SIZE//2
+        x1 = WINDOW_WIDTH//2 + BOSS_SIZE//2
+        y1 = WINDOW_HEIGHT//2 + BOSS_SIZE//2
+        self.boss = self.canvas.create_rectangle(x0, y0, x1, y1, fill=BOSS_COLOR)
+        self.boss_attack_running = True
+        self.start_boss_attack()
+        self.check_boss_collision()  # start collision detection for boss attacks
+
+    # --- Boss attack cycle ---
+    def start_boss_attack(self):
+        if not self.boss_attack_running: return
+        attack = random.choice([1,2,3,4])
+        if attack==1: self.boss_attack_cross()
+        elif attack==2: self.boss_attack_halfscreen()
+        else: self.boss_attack_dummy()
+
+    # --- Attack 1: rotating cross (edges) ---
+    def boss_attack_cross(self):
+        if not self.boss_attack_running: return
+        if hasattr(self, "attack_squares"):
+            for sq in self.attack_squares: self.canvas.delete(sq)
+        self.attack_squares = []
+
+        cx, cy = WINDOW_WIDTH//2, WINDOW_HEIGHT//2
+        positions = [
+            (cx, SMALL_ENEMY_SIZE//2),  # top
+            (cx, WINDOW_HEIGHT - SMALL_ENEMY_SIZE//2),  # bottom
+            (SMALL_ENEMY_SIZE//2, cy),  # left
+            (WINDOW_WIDTH - SMALL_ENEMY_SIZE//2, cy)  # right
+        ]
+        for px, py in positions:
+            sq = self.canvas.create_rectangle(
+                px-SMALL_ENEMY_SIZE//2, py-SMALL_ENEMY_SIZE//2,
+                px+SMALL_ENEMY_SIZE//2, py+SMALL_ENEMY_SIZE//2,
+                fill=WARNING_COLOR
+            )
+            self.attack_squares.append(sq)
+
+        self.add_timer(lambda: self.make_squares_solid(self.attack_squares), 1000)
+        self.rotate_cross(positions, cx, cy, 0, True)
+
+    def make_squares_solid(self, squares):
+        for sq in squares: self.canvas.itemconfig(sq, fill=BOSS_COLOR)
+        self.add_timer(lambda: [self.canvas.delete(sq) for sq in squares], 500)  # disappear after 0.5s
+
+    def rotate_cross(self, positions, cx, cy, step, clockwise=True):
+        if not self.boss_attack_running or step>36:
+            self.add_timer(self.start_boss_attack, 500)
+            return
+        angle = math.radians(step*10*(1 if clockwise else -1))
+        new_pos=[]
+        for px, py in positions:
+            dx, dy = px-cx, py-cy
+            nx = dx*math.cos(angle)-dy*math.sin(angle)+cx
+            ny = dx*math.sin(angle)+dy*math.cos(angle)+cy
+            new_pos.append((nx, ny))
+        for sq, (nx, ny) in zip(self.attack_squares, new_pos):
+            self.canvas.coords(sq, nx-SMALL_ENEMY_SIZE//2, ny-SMALL_ENEMY_SIZE//2,
+                                   nx+SMALL_ENEMY_SIZE//2, ny+SMALL_ENEMY_SIZE//2)
+        self.add_timer(lambda: self.rotate_cross(positions, cx, cy, step+1, clockwise), BOSS_ATTACK_INTERVAL)
+
+    # --- Attack 2: half-screen ---
+    def boss_attack_halfscreen(self):
+        if not self.boss_attack_running: return
+        self.attack_squares=[]
+        padding=30
+        for i in range(padding, WINDOW_WIDTH//2, SMALL_ENEMY_SIZE*2):
+            for j in range(padding, WINDOW_HEIGHT, SMALL_ENEMY_SIZE*2):
+                if (WINDOW_WIDTH//2-BOSS_SIZE//2 < i < WINDOW_WIDTH//2+BOSS_SIZE//2) and \
+                   (WINDOW_HEIGHT//2-BOSS_SIZE//2 < j < WINDOW_HEIGHT//2+BOSS_SIZE//2):
+                    continue
+                sq=self.canvas.create_rectangle(i,j,i+SMALL_ENEMY_SIZE,j+SMALL_ENEMY_SIZE, fill=WARNING_COLOR)
+                self.attack_squares.append(sq)
+        self.add_timer(lambda: self.make_squares_solid(self.attack_squares), 1000)
+        self.add_timer(self.start_boss_attack, 3000)
+
+    # --- Dummy attacks ---
+    def boss_attack_dummy(self):
+        if self.boss_attack_running:
+            self.add_timer(self.start_boss_attack, 1000)
+
+    # --- Boss attack collision with player ---
+    def check_boss_collision(self):
+        if not self.running or not self.boss_attack_running:
+            return
+        px1, py1, px2, py2 = self.canvas.coords(self.player)
+        for sq in self.attack_squares:
+            sx1, sy1, sx2, sy2 = self.canvas.coords(sq)
+            if not (px2 < sx1 or px1 > sx2 or py2 < sy1 or py1 > sy2):
+                self.game_over()
+                return
+        self.add_timer(self.check_boss_collision, 30)
 
     # --- Enemy spawning ---
     def spawn_enemies(self):
@@ -272,8 +399,8 @@ class Game:
         )
 
 
-# --- Run game ---
-if __name__ == "__main__":
+# --- Run Game ---
+if __name__=="__main__":
     root = tk.Tk()
     game = Game(root)
     root.mainloop()
